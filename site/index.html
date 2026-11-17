@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Does Optimization Beat 1/N?</title>
+<meta name="description" content="Walk-forward backtest of portfolio construction methods on a curated ETF menu, computed in your browser, with the statistics needed to tell skill from luck.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23234'/%3E%3Cpath d='M6 24 L12 16 L17 19 L26 8' stroke='%2366d9a8' stroke-width='3' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@4.3.0/plotly-basic.min.js" defer></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">Portfolio construction lab</p>
+    <h1>Does optimization beat 1/N?</h1>
+    <p class="lede">Pick ETFs and settings, then run a walk-forward backtest of five construction methods against equal weight.
+      Everything is computed in your browser. Every result comes with the statistics needed to tell skill from luck.</p>
+    <p class="disclaimer" role="note"><strong>Educational project, not investment advice.</strong>
+      Backtests describe the past under simplifying assumptions and do not predict future returns.</p>
+  </div>
+</header>
+
+<main class="wrap layout">
+  <aside class="panel controls" aria-label="Backtest settings">
+    <section class="trials" aria-live="polite">
+      <div class="trials-head">
+        <span class="trials-label">Tried this session</span>
+        <button type="button" class="info" aria-expanded="false" aria-controls="trials-help" title="Why count?">?</button>
+      </div>
+      <div class="trials-count"><span id="n-configs">0 configurations</span> · <span id="n-variants">0 strategy variants</span></div>
+      <p id="trials-help" class="help" hidden>Every run counts. Try enough configurations and one will look good by chance alone.
+        The verdict widens its confidence interval for the number of variants you have tried, and the <em>deflated Sharpe</em> column does the same for the comparison with cash.
+        The counter resets when you close this tab.</p>
+    </section>
+
+    <section>
+      <h2>Assets <span class="count" id="asset-count"></span></h2>
+      <div class="presets" id="presets"></div>
+      <input type="search" id="asset-filter" placeholder="Filter ETFs…" aria-label="Filter ETFs">
+      <div id="asset-list" class="asset-list"></div>
+      <p class="hint" id="start-hint"></p>
+    </section>
+
+    <section>
+      <h2>Strategies</h2>
+      <div id="strategy-list" class="checks"></div>
+      <p class="hint">Equal weight is always included as the bar to beat. SPY and 60/40 (SPY/IEF) benchmarks are always shown.</p>
+    </section>
+
+    <section class="grid2">
+      <label>Lookback
+        <select id="lookback">
+          <option value="126">126 days (6 mo)</option>
+          <option value="252">252 days (1 yr)</option>
+          <option value="504">504 days (2 yr)</option>
+        </select>
+      </label>
+      <label>Rebalance
+        <select id="freq">
+          <option value="ME">Monthly</option>
+          <option value="QE">Quarterly</option>
+        </select>
+      </label>
+      <label>Cost (bps per unit traded)
+        <input type="number" id="cost" min="0" max="200" step="1">
+      </label>
+      <label>Max weight per asset <output id="cap-out"></output>
+        <input type="range" id="cap" min="10" max="100" step="5">
+      </label>
+      <label>Start (optional)
+        <input type="date" id="start">
+      </label>
+      <label>End (optional)
+        <input type="date" id="end">
+      </label>
+    </section>
+
+    <div class="actions">
+      <button type="button" id="run" class="primary" disabled>Loading…</button>
+      <button type="button" id="share" class="ghost" title="Copy a link to this configuration">Copy link</button>
+    </div>
+    <p id="form-error" class="error" role="alert" hidden></p>
+  </aside>
+
+  <section class="results" aria-live="polite">
+    <div id="status" class="status">
+      <div class="bar"><div id="status-fill"></div></div>
+      <span id="status-text">Starting…</span>
+    </div>
+
+    <div id="report" hidden>
+      <article class="panel verdict" id="verdict"></article>
+
+      <article class="panel">
+        <div class="section-head">
+          <h2>Results vs equal weight</h2>
+          <div class="toggle" role="group" aria-label="Costs">
+            <button type="button" data-basis="net" class="on">Net of costs</button>
+            <button type="button" data-basis="gross">Gross</button>
+          </div>
+        </div>
+        <p class="sub" id="period-line"></p>
+        <div class="table-scroll"><table id="main-table" class="data"></table></div>
+        <p class="note">ΔSharpe interval: 95% circular block bootstrap (21-day blocks) of the Sharpe difference vs equal weight, net of costs.
+          The bar shows the interval, the dot the estimate. An interval that crosses zero means there is no reliable difference.
+          The headline verdict widens this interval for the number of variants you have tried this session.
+          Deflated Sharpe vs cash: probability that the excess return over T-bills beats the best that luck alone would produce, given all variants tried.</p>
+      </article>
+
+      <article class="panel">
+        <h2>Growth of $1</h2>
+        <p class="sub">Net of costs, log scale. The dotted line splits the period into the two halves compared below.</p>
+        <div id="chart-wealth" class="chart"></div>
+        <h3>Drawdown from previous peak</h3>
+        <div id="chart-dd" class="chart short"></div>
+      </article>
+
+      <article class="panel">
+        <h2>Weights over time</h2>
+        <p class="sub">Month-end weights after drift. Check whether a "winning" strategy is really one or two assets.</p>
+        <div id="weights" class="weights-grid"></div>
+      </article>
+
+      <div class="two-col">
+        <article class="panel">
+          <h2>Does it hold in both halves?</h2>
+          <p class="sub" id="halves-sub"></p>
+          <div class="table-scroll"><table id="halves-table" class="data compact"></table></div>
+        </article>
+        <article class="panel">
+          <h2>At the same risk</h2>
+          <p class="sub" id="volmatch-sub"></p>
+          <div class="table-scroll"><table id="volmatch-table" class="data compact"></table></div>
+        </article>
+      </div>
+
+      <div class="two-col">
+        <article class="panel">
+          <h2>Stress periods</h2>
+          <p class="sub">Total return (max drawdown) within each episode, net of costs.</p>
+          <div class="table-scroll"><table id="stress-table" class="data compact"></table></div>
+        </article>
+        <article class="panel">
+          <h2>Cost sensitivity</h2>
+          <p class="sub">Sharpe ratio at each cost level. A strategy that only wins at 0 bps is not worth trading.</p>
+          <div class="table-scroll"><table id="cost-table" class="data compact"></table></div>
+        </article>
+      </div>
+    </div>
+
+    <article class="panel method">
+      <h2>How it works</h2>
+      <ul>
+        <li><strong>Walk-forward.</strong> On each rebalance date, a strategy sees only the trailing lookback window. New weights apply from the next trading day, and between rebalances weights drift with prices.</li>
+        <li><strong>Strategies.</strong> Min variance and max Sharpe use a Ledoit-Wolf shrunk covariance matrix. Max Sharpe uses raw trailing mean returns on purpose, to show estimation error. Risk parity equalizes risk contributions. HRP (hierarchical risk parity) clusters assets by correlation. All are long-only and capped at the max weight.</li>
+        <li><strong>Costs.</strong> Cost = bps × turnover, where turnover is the sum of absolute weight changes at each rebalance.</li>
+        <li><strong>Sharpe.</strong> Computed on daily excess returns over 3-month T-bills (^IRX), annualized.</li>
+        <li><strong>Same-risk comparison.</strong> Each strategy is levered or delevered to equal weight's volatility, borrowing at the T-bill rate. It uses full-sample volatility, so it is a comparison aid, not a tradable strategy.</li>
+        <li><strong>Data.</strong> Adjusted closes from Yahoo Finance via yfinance, refreshed nightly by GitHub Actions and published only if the quality checks pass. <span id="data-line"></span></li>
+      </ul>
+      <p class="foot">Source, tests and the original 10-ETF case study: <a id="repo-link" href="https://github.com/">GitHub repository</a>.</p>
+    </article>
+  </section>
+</main>
+</body>
+</html>

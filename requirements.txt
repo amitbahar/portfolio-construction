@@ -1,0 +1,11 @@
+# Engine (also runs in the browser via Pyodide, which provides numpy, pandas and scipy)
+numpy==2.5.4
+pandas==3.1.1
+scipy==1.18.1
+# Data pipeline
+yfinance==1.8.0
+# Research scripts and tests
+matplotlib==3.11.2
+tabulate==0.10.0
+pytest==9.2.0
+scikit-learn==1.9.1  # only for the test that checks our Ledoit-Wolf against sklearn's
