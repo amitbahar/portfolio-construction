@@ -1,6 +1,6 @@
 # Does optimization beat 1/N?
 
-**[Live site →](https://USERNAME.github.io/REPO/)** · An interactive walk-forward backtest of portfolio construction methods on a curated menu of 43 ETFs. It runs entirely in your browser, and the statistics are built to tell skill from luck.
+**[Live site →](https://amitbahar.github.io/portfolio-construction/)** · An interactive walk-forward backtest of portfolio construction methods on a curated menu of 43 ETFs. It runs entirely in your browser, and the statistics are built to tell skill from luck.
 
 ![Screenshot of the site: verdict, results table with confidence intervals, growth of $1 chart](docs/screenshot.png)
 
@@ -88,14 +88,14 @@ Then open http://localhost:8765. To rerun the case study on the latest data:
 1. Push this repository to GitHub.
 2. In **Settings → Pages**, set **Source** to **GitHub Actions**.
 3. Run the **Refresh data and deploy site** workflow once from the Actions tab (it also runs on every push to `main` and nightly).
-4. Replace `USERNAME/REPO` in the link at the top of this README.
+4. Point the live-site link at the top of this README at your own Pages URL.
 
 ## Data notes
 
-- Prices are adjusted closes (dividends and splits) from Yahoo Finance via `yfinance`. The risk-free rate is the 13-week T-bill yield (`^IRX`).
+- ETF prices are adjusted closes (dividends and splits) from Yahoo Finance, retrieved with the open-source [`yfinance`](https://github.com/ranaroussi/yfinance) library. The risk-free rate is the 3-month Treasury bill rate ([FRED series DTB3](https://fred.stlouisfed.org/series/DTB3), Federal Reserve Bank of St. Louis).
 - A nightly refresh is published only if every hard quality check passes. Large daily moves (beyond ±15%) are kept, not dropped, and listed in `data/meta.json` for review.
 - Free data sources revise history. Each published `meta.json` records the download time and library version.
-- Check Yahoo Finance's terms of use before redistributing price data. The site publishes a derived price file (`data/prices.csv`).
+- **Data use.** This is a non-commercial educational project, not affiliated with or endorsed by Yahoo. Price data remains subject to [Yahoo's terms of service](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html). The site's `data/prices.csv` exists only so the backtest can run in the browser; please don't reuse it as a data source. Rights holders who want it removed can [open an issue](https://github.com/amitbahar/portfolio-construction/issues), and it will be taken down promptly. The repository itself contains no price data: the file is generated during deployment.
 
 ## Limitations
 

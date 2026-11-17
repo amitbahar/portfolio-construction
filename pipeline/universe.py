@@ -51,5 +51,5 @@ UNIVERSE = [
     ("VNQI", "International real estate", "Real assets"),
 ]
 
-RISK_FREE = "^IRX"  # 13-week T-bill yield, percent
+RISK_FREE = "DTB3"  # FRED: 3-month Treasury bill secondary market rate, percent (US government data)
 REQUIRED = ["SPY", "IEF"]  # used by the fixed benchmarks

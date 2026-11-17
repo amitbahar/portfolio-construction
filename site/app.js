@@ -438,7 +438,7 @@ async function boot() {
   const q = state.meta.quality;
   $("data-line").textContent = `Data through ${state.meta.data_through}, downloaded ${state.meta.downloaded_at.replace("T", " ").slice(0, 16)} UTC (${state.meta.source}). `
     + `${q.extreme_returns.length} daily moves beyond ±15% are kept and listed for review in data/meta.json.`;
-  if (state.meta.repo) $("repo-link").href = state.meta.repo;
+  if (state.meta.repo) { $("repo-link").href = state.meta.repo; $("issues-link").href = `${state.meta.repo}/issues`; }
   if (state.ready) run();
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.result && render());
 }

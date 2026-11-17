@@ -1,5 +1,7 @@
 """Nightly data refresh: download -> SQLite -> quality gates -> export for the site.
 
+ETF prices come from Yahoo Finance via yfinance; the T-bill rate comes from FRED.
+
 Exits non-zero if a hard quality check fails, so the deploy job is skipped and the previously
 published data stays live.
 
@@ -32,7 +34,7 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 CREATE TABLE IF NOT EXISTS risk_free (
     date        TEXT PRIMARY KEY,
-    annual_rate REAL NOT NULL  -- 13-week T-bill yield (^IRX), decimal
+    annual_rate REAL NOT NULL  -- 3-month T-bill rate (FRED DTB3), decimal
 );
 CREATE TABLE IF NOT EXISTS download_log (
     downloaded_at TEXT NOT NULL,
@@ -69,7 +71,20 @@ def download(tickers, retries=3):
     return pd.concat(frames, axis=1) if frames else pd.DataFrame(), todo
 
 
-def load(con, close, irx):
+def download_risk_free(series=RISK_FREE, retries=3):
+    """Daily T-bill rate (percent) from FRED's public CSV endpoint; no API key needed."""
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+    for attempt in range(retries):
+        try:
+            df = pd.read_csv(url, index_col=0, parse_dates=True, na_values=["."])
+            return df[series].dropna()
+        except Exception as e:  # network hiccup: retry, then let the quality gate catch a stale series
+            print(f"FRED download failed ({e}); attempt {attempt + 1}/{retries}", file=sys.stderr)
+            time.sleep(10 * (attempt + 1))
+    return pd.Series(dtype=float)
+
+
+def load(con, close, rf_pct):
     import yfinance as yf
 
     con.executescript(SCHEMA)
@@ -79,10 +94,10 @@ def load(con, close, irx):
     long.columns = ["date", "ticker", "adj_close"]
     long["date"] = long["date"].dt.strftime("%Y-%m-%d")
     long.to_sql("prices", con, if_exists="append", index=False)
-    rf = pd.DataFrame({"date": irx.index.strftime("%Y-%m-%d"), "annual_rate": irx.values / 100})
+    rf = pd.DataFrame({"date": rf_pct.index.strftime("%Y-%m-%d"), "annual_rate": rf_pct.values / 100})
     rf.to_sql("risk_free", con, if_exists="append", index=False)
     con.execute("INSERT INTO download_log VALUES (?, ?, ?, ?, ?)",
-                (dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), f"yfinance {yf.__version__}",
+                (dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), f"Yahoo Finance via yfinance {yf.__version__}; T-bill rate from FRED {RISK_FREE}",
                  close.shape[1], long["date"].min(), long["date"].max()))
     con.commit()
 
@@ -179,10 +194,9 @@ def main(argv=None):
 
     if not a.skip_download:
         close, failed = download(expected)
-        irx, _ = download([RISK_FREE])
         if failed:
             print(f"WARNING: no data for {failed}", file=sys.stderr)
-        load(con, close, irx[RISK_FREE].dropna())
+        load(con, close, download_risk_free())
 
     fails, report, span = quality(con, expected)
     print(json.dumps({k: v for k, v in report.items() if k != "extreme_returns"}, indent=1))
