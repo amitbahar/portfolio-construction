@@ -21,7 +21,9 @@ OUT = Path(__file__).parent / "results"
 
 def load_prices(db):
     con = sqlite3.connect(db)
-    prices = (pd.read_sql("SELECT date, ticker, adj_close FROM prices", con, parse_dates=["date"])
+    has_view = con.execute("SELECT 1 FROM sqlite_master WHERE name = 'prices_usd'").fetchone()
+    table = "prices_usd" if has_view else "prices"  # older snapshots are all-USD and have no view
+    prices = (pd.read_sql(f"SELECT date, ticker, adj_close FROM {table}", con, parse_dates=["date"])
               .pivot(index="date", columns="ticker", values="adj_close"))
     rf = pd.read_sql("SELECT date, annual_rate FROM risk_free", con, parse_dates=["date"]).set_index("date")["annual_rate"]
     return prepare(prices, rf)

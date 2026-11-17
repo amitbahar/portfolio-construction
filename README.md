@@ -1,6 +1,6 @@
 # Does optimization beat 1/N?
 
-**[Live site →](https://amitbahar.github.io/portfolio-construction/)** · An interactive walk-forward backtest of portfolio construction methods on a curated menu of 43 ETFs. It runs entirely in your browser, and the statistics are built to tell skill from luck.
+**[Live site →](https://amitbahar.github.io/portfolio-construction/)** · An interactive walk-forward backtest of portfolio construction methods on a curated menu of 51 ETFs, 43 US-listed and 8 listed on the Tel Aviv Stock Exchange. It runs entirely in your browser, and the statistics are built to tell skill from luck.
 
 ![Screenshot of the site: verdict, results table with confidence intervals, growth of $1 chart](docs/screenshot.png)
 
@@ -33,7 +33,7 @@ A page full of toggles invites data snooping, so the page pushes back:
 ```mermaid
 flowchart LR
     subgraph Actions["GitHub Actions (nightly, Tue–Sat)"]
-        A[yfinance download<br/>43 ETFs + T-bill rate] --> B[(SQLite<br/>prices, risk_free,<br/>returns view)]
+        A[Downloads: yfinance prices,<br/>FRED T-bill rate,<br/>Bank of Israel USD/ILS] --> B[(SQLite<br/>prices, fx, risk_free,<br/>prices_usd + returns views)]
         B --> C{Quality gates<br/>staleness, gaps,<br/>coverage, bad prices}
         C -- pass --> D[Export prices.csv<br/>+ meta.json]
         D --> T[Unit tests +<br/>engine smoke test]
@@ -45,7 +45,8 @@ flowchart LR
 
 - **No server and no tokens.** Pages serves static files, and the same Python engine used in research and tests runs in the visitor's browser via [Pyodide](https://pyodide.org). A typical run takes about 15–20 seconds. The first visit downloads about 30 MB of Python runtime, which the browser then caches.
 - **Walk-forward.** On each rebalance date a strategy sees only the trailing lookback window. Weights apply from the next trading day and drift with prices between rebalances. Costs are bps × turnover.
-- **Covariance.** Ledoit-Wolf shrinkage, reimplemented in numpy (tested against scikit-learn) so the browser doesn't need to download sklearn.
+- **Covariance.** Ledoit-Wolf shrinkage, reimplemented in numpy (tested against scikit-learn) so the browser doesn't need to download sklearn. When the chosen funds trade on different exchanges, covariance is estimated from weekly returns. Tel Aviv closes before New York, so daily returns understate correlation: about 0.25 daily against 0.40 weekly for Tel Aviv funds vs SPY.
+- **Currencies.** Tel Aviv prices are stored in shekels and converted to US dollars in a SQL view at the Bank of Israel representative rate, so their returns include currency moves. Everything runs on the US trading calendar; a Tel Aviv move on a US holiday rolls into the next US trading day.
 - **Max Sharpe** uses raw trailing mean returns on purpose, to show estimation error. It's solved with an exact convex reformulation, about 200× faster than a frontier sweep, which is what makes in-browser runs practical.
 
 ## Repository layout
@@ -53,7 +54,7 @@ flowchart LR
 | Path | Contents |
 |---|---|
 | `engine/` | Pure computation: strategies, simulation, statistics, and `api.run_all` (config in, JSON out). No I/O, so it runs in CPython and in Pyodide. |
-| `pipeline/` | `universe.py` (curated ETF menu), `refresh.py` (download → SQLite → quality gates → export), `build_site.py`, `smoke_test.py` |
+| `pipeline/` | `universe.py` (curated ETF menu), `refresh.py` (download → SQLite → currency conversion → quality gates → export), `build_site.py`, `smoke_test.py` |
 | `site/` | Static front end: `index.html`, `style.css`, `app.js` (UI, URL state, trial counter, charts), `worker.js` (Pyodide) |
 | `research/` | The original 10-ETF case study (`case_study.py`) and its results |
 | `tests/` | Synthetic-data tests: manual share-count check, no-look-ahead, weight constraints, risk parity, deflated Sharpe, config validation, pipeline quality gates |
@@ -92,7 +93,8 @@ Then open http://localhost:8765. To rerun the case study on the latest data:
 
 ## Data notes
 
-- ETF prices are adjusted closes (dividends and splits) from Yahoo Finance, retrieved with the open-source [`yfinance`](https://github.com/ranaroussi/yfinance) library. The risk-free rate is the 3-month Treasury bill rate ([FRED series DTB3](https://fred.stlouisfed.org/series/DTB3), Federal Reserve Bank of St. Louis).
+- ETF prices are adjusted closes (dividends and splits) from Yahoo Finance, retrieved with the open-source [`yfinance`](https://github.com/ranaroussi/yfinance) library. The risk-free rate is the 3-month Treasury bill rate ([FRED series DTB3](https://fred.stlouisfed.org/series/DTB3), Federal Reserve Bank of St. Louis). The USD/ILS exchange rate is the Bank of Israel's representative rate, from its [public statistics API](https://edge.boi.gov.il).
+- Each fund's completeness is checked against its own exchange's trading calendar, so Tel Aviv's different trading week and holidays don't count as gaps. Yahoo's Tel Aviv data is patchier than its US data: four bond funds are missing 1–9% of trading days. Gaps are forward-filled, and those funds are marked on the site.
 - A nightly refresh is published only if every hard quality check passes. Large daily moves (beyond ±15%) are kept, not dropped, and listed in `data/meta.json` for review.
 - Free data sources revise history. Each published `meta.json` records the download time and library version.
 - **Data use.** This is a non-commercial educational project, not affiliated with or endorsed by Yahoo. Price data remains subject to [Yahoo's terms of service](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html). The site's `data/prices.csv` exists only so the backtest can run in the browser; please don't reuse it as a data source. Rights holders who want it removed can [open an issue](https://github.com/amitbahar/portfolio-construction/issues), and it will be taken down promptly. The repository itself contains no price data: the file is generated during deployment.
@@ -102,4 +104,5 @@ Then open http://localhost:8765. To rerun the case study on the latest data:
 - A flat bps cost model ignores market impact and bid-ask spreads that widen in stress periods.
 - The same-risk comparison uses full-sample volatility, so it's a comparison aid, not a tradable strategy.
 - The multiple-testing adjustment counts only variants tried in the current browser tab. It can't know about searching done elsewhere.
+- Yahoo's history for Tel Aviv funds starts in August 2019, whatever the fund's real inception date. Any backtest that includes one therefore starts in 2020 and misses 2008 and the COVID crash.
 - ETFs only. Individual stocks would need point-in-time index membership and delisting returns (see [the original plan](portfolio_construction_project.md), section 9).

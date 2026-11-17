@@ -130,6 +130,16 @@ def test_run_all_end_to_end(market):
     assert again["table"] == run_all(cfg, rets, rf)["table"]
 
 
+def test_mixed_exchanges_use_weekly_covariance(market):
+    _, rets, rf = market
+    cfg = {"assets": ["AAA", "BBB", "CCC", "DDD"], "cap": 0.5, "n_boot": 20, "strategies": ["Min variance"]}
+    same = run_all(cfg, rets, rf)
+    mixed = run_all(cfg, rets, rf, exchanges={"AAA": "TASE"})
+    assert same["config"]["cov_freq"] == "daily" and mixed["config"]["cov_freq"] == "weekly"
+    assert same["table"]["Min variance"] != mixed["table"]["Min variance"]
+    assert same["table"]["Equal weight"] == mixed["table"]["Equal weight"]
+
+
 def test_too_short_period_is_rejected(market):
     _, rets, rf = market
     with pytest.raises(ValueError, match="years"):

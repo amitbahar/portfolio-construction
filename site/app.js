@@ -15,7 +15,16 @@ const PRESETS = {
   "Global multi-asset": ["VTI", "EFA", "EEM", "AGG", "TIP", "LQD", "GLD", "DBC", "VNQ"],
   "US sectors": ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU", "XLB"],
   "US factors": ["IWD", "IWF", "USMV", "MTUM", "QUAL"],
+  "Israel (TASE)": ["KSM-F74.TA", "HRL-F11.TA", "HRL-F15.TA", "HRL-F300.TA", "HRL-F303.TA", "TCH-F25.TA"],
+  "Israel + US": ["KSM-F74.TA", "HRL-F300.TA", "TCH-F25.TA", "SPY", "IEF", "GLD"],
 };
+const GROUP_NOTES = {
+  "Israel (TASE)": "Tel Aviv-listed funds, converted from shekels to US dollars at the Bank of Israel representative rate, "
+    + "so returns include currency moves. Yahoo's history for these funds starts in August 2019, so any backtest that "
+    + "includes them starts in 2020. Tel Aviv closes before New York, which makes daily correlations with US funds look "
+    + "too low; when you mix exchanges, the optimizers estimate risk from weekly returns instead.",
+};
+const shortTicker = (t) => t.replace(/\.TA$/, "");
 const ASSET_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7",
   "#9c755f", "#bab0ac", "#1f77b4", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf", "#bcbd22",
   "#aec7e8", "#ffbb78"];
@@ -92,11 +101,12 @@ function buildControls() {
   $("asset-list").innerHTML = Object.entries(groups).map(([cat, list]) => `
     <div class="asset-group" data-cat="${esc(cat)}">
       <div class="group-head"><span>${esc(cat)}</span><button type="button" data-group="${esc(cat)}">toggle all</button></div>
+      ${GROUP_NOTES[cat] ? `<details class="group-note"><summary>Prices in USD, data from 2019 · details</summary>${esc(GROUP_NOTES[cat])}</details>` : ""}
       ${list.map((a) => `
         <label class="asset" data-ticker="${a.ticker}" data-search="${esc((a.ticker + " " + a.name + " " + cat).toLowerCase())}">
           <input type="checkbox" value="${a.ticker}">
-          <span class="tk">${a.ticker}</span><span class="nm" title="${esc(a.name)}">${esc(a.name)}</span>
-          <span class="since" title="First price ${a.first}">${a.first.slice(0, 4)}</span>
+          <span class="tk" title="${esc(a.ticker)}">${esc(shortTicker(a.ticker))}</span><span class="nm" title="${esc(a.name)}">${esc(a.name)}</span>
+          <span class="since" title="First price ${a.first}${a.coverage < 0.995 ? ` · ${(a.coverage * 100).toFixed(0)}% of trading days present; gaps are forward-filled` : ""}">${a.first.slice(0, 4)}${a.coverage < 0.995 ? "*" : ""}</span>
         </label>`).join("")}
     </div>`).join("");
 
@@ -192,7 +202,7 @@ function onConfigChange() {
   if (latest.ticker) {
     const begin = new Date(latest.first);
     begin.setDate(begin.getDate() + Math.round(c.lookback * 365 / 252));
-    $("start-hint").innerHTML = `All selected funds trade from <strong>${latest.first}</strong> (limited by ${latest.ticker}${c.assets.includes(latest.ticker) ? "" : ", which the 60/40 benchmark needs"}). `
+    $("start-hint").innerHTML = `All selected funds trade from <strong>${latest.first}</strong> (limited by ${shortTicker(latest.ticker)}${c.assets.includes(latest.ticker) ? "" : ", which the 60/40 benchmark needs"}). `
       + `After the ${c.lookback}-day lookback, the backtest can begin around ${begin.toISOString().slice(0, 7)}.`;
   }
   const err = validate(c) || (state.serverError?.key === configKey(c) ? state.serverError.text : null);
@@ -326,7 +336,8 @@ function renderMainTable() {
   const p = r.period;
   $("period-line").textContent = `${p.start} to ${p.end} (${p.years.toFixed(1)} years) · ${r.config.assets.length} assets · `
     + `${r.config.lookback}-day lookback · ${r.config.freq === "QE" ? "quarterly" : "monthly"} rebalance · `
-    + `${r.config.cost_bps} bps costs · ${pct(r.config.cap, 0)} cap`;
+    + `${r.config.cost_bps} bps costs · ${pct(r.config.cap, 0)} cap`
+    + (r.config.cov_freq === "weekly" ? " · weekly covariance (assets trade on different exchanges)" : "");
   const M = Math.max(0.2, ...Object.values(r.vs_ew).flatMap((v) => v.d_sharpe_ci.map(Math.abs)));
   const rows = r.strategies.map((k) => {
     const m = r.table[k][state.basis];
@@ -377,14 +388,14 @@ function renderCharts() {
   const color = Object.fromEntries(assets.map((a, i) => [a, ASSET_COLORS[i % ASSET_COLORS.length]]));
   const opt = Object.keys(r.weights).filter((k) => k !== "Equal weight");
   $("weights").innerHTML = opt.length
-    ? `<div style="grid-column:1/-1;font-size:.8rem;color:${css("--muted")}">${assets.map((a) => `<span style="margin-right:10px;white-space:nowrap"><span class="swatch" style="background:${color[a]}"></span>${a}</span>`).join("")}</div>`
+    ? `<div style="grid-column:1/-1;font-size:.8rem;color:${css("--muted")}">${assets.map((a) => `<span style="margin-right:10px;white-space:nowrap"><span class="swatch" style="background:${color[a]}"></span>${esc(shortTicker(a))}</span>`).join("")}</div>`
       + opt.map((k, i) => `<div><p class="wtitle">${sw(k)}${k}</p><div id="w-${i}" class="chart"></div></div>`).join("")
     : `<p class="sub">Select an optimized strategy to see its weights.</p>`;
   opt.forEach((k, i) => {
     const w = r.weights[k];
     Plotly.react(`w-${i}`, w.assets.map((a, j) => ({
-      x: w.dates, y: w.values[j], name: a, type: "scatter", mode: "lines", stackgroup: "w",
-      line: { width: 0, color: color[a] }, fillcolor: color[a], hovertemplate: `${a} %{y:.0%}<extra></extra>`,
+      x: w.dates, y: w.values[j], name: shortTicker(a), type: "scatter", mode: "lines", stackgroup: "w",
+      line: { width: 0, color: color[a] }, fillcolor: color[a], hovertemplate: `${shortTicker(a)} %{y:.0%}<extra></extra>`,
     })), plotLayout({ showlegend: false, margin: { l: 40, r: 8, t: 4, b: 28 }, hovermode: "x",
       yaxis: { ...plotLayout().yaxis, tickformat: ".0%", range: [0, 1] } }), PLOT_CFG);
   });

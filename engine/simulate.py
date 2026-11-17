@@ -20,7 +20,7 @@ def first_rebalance(index, lookback, freq="ME", start=None):
     return dates[0]
 
 
-def run(rule, rets, rf_daily, assets=None, lookback=252, freq="ME", cap=1.0, start=None):
+def run(rule, rets, rf_daily, assets=None, lookback=252, freq="ME", cap=1.0, start=None, cov="daily"):
     """Simulate a weighting rule.
 
     On each rebalance date d, `rule` sees only the trailing `lookback` returns of `assets` up to and
@@ -38,7 +38,7 @@ def run(rule, rets, rf_daily, assets=None, lookback=252, freq="ME", cap=1.0, sta
     targets = {}
     for d in dates:
         hist = sub.loc[:d].tail(lookback)
-        targets[d] = rule(hist, cap=cap, rf=rf_daily.loc[d] * 252)
+        targets[d] = rule(hist, cap=cap, rf=rf_daily.loc[d] * 252, cov=cov)
     targets = pd.DataFrame(targets).T.reindex(columns=rets.columns, fill_value=0.0)
 
     R = rets.values

@@ -31,6 +31,28 @@ def test_stale_data_fails():
     assert any("days old" in f for f in fails)
 
 
+def test_foreign_prices_are_converted_to_usd():
+    idx = pd.bdate_range(end=dt.date.today(), periods=50)
+    close = pd.DataFrame({"SPY": 100.0, "IEF": 100.0, "KSM-F74.TA": 36000.0}, index=idx)
+    fx = pd.Series(3.6, index=idx[::2])  # rates on alternate days: the view uses the latest one
+    con = sqlite3.connect(":memory:")
+    refresh.load(con, close, pd.Series(4.0, index=idx), {"ILS": fx})
+    usd = pd.read_sql("SELECT ticker, MIN(adj_close) lo, MAX(adj_close) hi FROM prices_usd GROUP BY ticker",
+                      con).set_index("ticker")
+    assert usd.loc["KSM-F74.TA", "lo"] == usd.loc["KSM-F74.TA", "hi"] == 10000.0
+    fails, _, _ = refresh.quality(con, ["SPY", "IEF", "KSM-F74.TA"])
+    assert fails == []
+
+
+def test_missing_fx_fails():
+    idx = pd.bdate_range(end=dt.date.today(), periods=50)
+    close = pd.DataFrame({"SPY": 100.0, "IEF": 100.0, "KSM-F74.TA": 36000.0}, index=idx)
+    con = sqlite3.connect(":memory:")
+    refresh.load(con, close, pd.Series(4.0, index=idx))
+    fails, _, _ = refresh.quality(con, ["SPY", "IEF", "KSM-F74.TA"])
+    assert any("exchange rate" in f for f in fails)
+
+
 def test_missing_required_and_gaps_fail():
     con = make_db(drop=slice(100, 130))
     fails, report, _ = refresh.quality(con, ["SPY", "IEF", "GLD", "TLT", "QQQ"])

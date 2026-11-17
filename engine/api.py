@@ -36,14 +36,20 @@ STRESS_PERIODS = [
 ]
 
 
-def prepare(prices, rf_annual):
+def prepare(prices, rf_annual, calendar="SPY"):
     """Daily returns and daily risk-free return from wide adjusted prices and the annual T-bill yield.
 
-    Isolated missing prices inside a ticker's history are forward-filled (up to 5 days) so a gap
-    shows up as a zero return followed by the catch-up move, instead of losing the move entirely.
+    Everything runs on the trading calendar of `calendar` (the US market): a move on a day only a
+    foreign exchange trades rolls into the next US trading day.
+
+    Missing prices inside a ticker's history (another exchange's holidays, data gaps) are
+    forward-filled for up to 10 days, so a gap shows up as zero returns followed by the catch-up
+    move instead of losing the move entirely.
     """
     prices = prices.sort_index()
-    filled = prices.ffill(limit=5).where(prices.bfill().notna())  # never fill before a ticker's first price
+    filled = prices.ffill(limit=10).where(prices.bfill().notna())  # never fill before a ticker's first price
+    if calendar in prices.columns:
+        filled = filled[prices[calendar].notna()]
     rets = filled.pct_change(fill_method=None)
     rf_daily = rf_annual.reindex(prices.index).ffill().shift(1).bfill() / 252  # yield known at prior close
     return rets, rf_daily
@@ -88,12 +94,15 @@ def _clean(x):
     return x
 
 
-def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None):
+def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None, exchanges=None):
     """Run every selected strategy plus the fixed benchmarks and compute all report sections.
 
     trials: {trial_key: daily Sharpe} of strategy variants already tried this session, used for the
     deflated Sharpe ratio. The current run's variants are added under `config_key` and the merged
     dict is returned so the caller can keep counting.
+
+    exchanges: {ticker: exchange}. When the chosen assets trade on more than one exchange, the
+    optimizers estimate covariance from weekly returns (see covariance.shrunk_cov).
     """
     c = normalize_config(cfg, list(rets_all.columns))
     cols = list(dict.fromkeys(c["assets"] + BENCHMARK_TICKERS))
@@ -105,6 +114,9 @@ def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None
     rf = rf_daily.reindex(rets.index)
     first_common = rets.index[0]
 
+    venues = {(exchanges or {}).get(a, "US") for a in c["assets"]}
+    c["cov_freq"] = "weekly" if len(venues) > 1 else "daily"
+
     rules = {k: STRATEGIES[k] for k in c["strategies"]}
     rules.update(BENCHMARKS)
     res = {}
@@ -113,7 +125,7 @@ def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None
             progress(name, i, len(rules))
         assets = c["assets"] if name in STRATEGIES else cols
         res[name] = run(rule, rets, rf, assets=assets, lookback=c["lookback"], freq=c["freq"],
-                        cap=c["cap"], start=c["start"])
+                        cap=c["cap"], start=c["start"], cov=c["cov_freq"])
     period = res["Equal weight"]["gross"].index
     years = len(period) / 252
     if years < MIN_YEARS:

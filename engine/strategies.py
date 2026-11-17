@@ -1,7 +1,8 @@
 """Weighting rules.
 
-Each rule takes a (lookback x assets) DataFrame of daily returns, the per-asset weight cap and the
-annual risk-free rate known on the rebalance date, and returns long-only weights summing to 1.
+Each rule takes a (lookback x assets) DataFrame of daily returns, the per-asset weight cap, the
+annual risk-free rate known on the rebalance date and the covariance frequency ("daily" or
+"weekly", see covariance.shrunk_cov), and returns long-only weights summing to 1.
 """
 import numpy as np
 import pandas as pd
@@ -47,20 +48,20 @@ def _min_var_weights(cov, cap):
     return _simplex_qp(lambda w: w @ cov @ w, len(cov), cap, jac=lambda w: 2 * cov @ w)
 
 
-def equal_weight(hist, cap=1.0, rf=0.0):
+def equal_weight(hist, cap=1.0, rf=0.0, cov="daily"):
     n = hist.shape[1]
     return pd.Series(1 / n, index=hist.columns)
 
 
-def min_variance(hist, cap=1.0, rf=0.0):
-    return pd.Series(_min_var_weights(shrunk_cov(hist), cap), index=hist.columns)
+def min_variance(hist, cap=1.0, rf=0.0, cov="daily"):
+    return pd.Series(_min_var_weights(shrunk_cov(hist, cov), cap), index=hist.columns)
 
 
-def risk_parity(hist, cap=1.0, rf=0.0):
+def risk_parity(hist, cap=1.0, rf=0.0, cov="daily"):
     """Equal risk contribution. Solved exactly via the log-barrier form
     min 0.5 w'Cw - (1/n) sum(log w), whose solution (normalized) has equal risk contributions.
     Falls back to a constrained least-squares fit on risk contributions if the cap binds."""
-    cov = shrunk_cov(hist)
+    cov = shrunk_cov(hist, cov)
     n = len(cov)
     res = minimize(
         lambda y: 0.5 * y @ cov @ y - np.log(y).sum() / n,
@@ -134,10 +135,10 @@ def _tangency_sweep(cov, mu, cap, w_mv, w_top, points=25):
     return best
 
 
-def max_sharpe(hist, cap=1.0, rf=0.0):
+def max_sharpe(hist, cap=1.0, rf=0.0, cov="daily"):
     """Mean-variance tangency using raw trailing mean returns: deliberately naive, to expose
     estimation error. Holds min variance when no capped portfolio is expected to beat cash."""
-    cov = shrunk_cov(hist)
+    cov = shrunk_cov(hist, cov)
     mu = hist.mean().values * 252 - rf
     w_top = _best_capped_return(mu, cap)
     if w_top @ mu <= 0:
@@ -148,9 +149,9 @@ def max_sharpe(hist, cap=1.0, rf=0.0):
     return pd.Series(w, index=hist.columns)
 
 
-def hrp(hist, cap=1.0, rf=0.0):
+def hrp(hist, cap=1.0, rf=0.0, cov="daily"):
     """Hierarchical Risk Parity (Lopez de Prado 2016), then capped."""
-    cov = shrunk_cov(hist)
+    cov = shrunk_cov(hist, cov)
     sd = np.sqrt(np.diag(cov))
     corr = np.clip(cov / np.outer(sd, sd), -1, 1)
     dist = np.sqrt(0.5 * (1 - corr))
@@ -178,7 +179,7 @@ def hrp(hist, cap=1.0, rf=0.0):
 
 def fixed(weights):
     """Static target weights, e.g. benchmarks. Missing tickers get 0. Ignores the cap."""
-    def rule(hist, cap=1.0, rf=0.0):
+    def rule(hist, cap=1.0, rf=0.0, cov="daily"):
         return pd.Series(weights, index=hist.columns).fillna(0.0)
     return rule
 

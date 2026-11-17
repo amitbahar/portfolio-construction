@@ -25,7 +25,15 @@ def ledoit_wolf(X):
     return cov
 
 
-def shrunk_cov(hist):
-    """Ledoit-Wolf covariance of daily returns, annualized (x252) so optimizer tolerances act on
-    sensible magnitudes."""
+def shrunk_cov(hist, freq="daily"):
+    """Ledoit-Wolf covariance of returns, annualized so optimizer tolerances act on sensible magnitudes.
+
+    freq="weekly" compounds the daily returns into Friday-ending weeks first. Use it when assets
+    trade in different time zones: a market that closes hours before New York reacts to US news a
+    day late, so daily returns understate the correlation (for Tel Aviv vs SPY, about 0.25 daily
+    against 0.40 weekly) and an optimizer would over-allocate to the "diversifying" asset.
+    """
+    if freq == "weekly":
+        weeks = (1 + hist).groupby(hist.index.to_period("W-FRI")).prod() - 1
+        return ledoit_wolf(weeks.values) * 52
     return ledoit_wolf(hist.values) * 252

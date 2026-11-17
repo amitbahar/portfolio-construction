@@ -107,8 +107,11 @@ output { color: var(--ink); font-weight: 600; }
 .asset-group { border-bottom: 1px solid var(--line); }
 .asset-group:last-child { border-bottom: 0; }
 .group-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--bg); font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); position: sticky; top: 0; z-index: 1; }
+.group-note { margin: 0; padding: 5px 10px; font-size: .74rem; color: var(--muted); line-height: 1.4; }
+.group-note summary { cursor: pointer; color: var(--accent); }
+.group-note[open] summary { margin-bottom: 4px; }
 .group-head button { border: 0; background: none; color: var(--accent); font-size: .74rem; cursor: pointer; padding: 0; }
-.asset { display: grid; grid-template-columns: 18px 52px 1fr auto; align-items: center; gap: 6px; padding: 4px 10px; font-size: .84rem; color: var(--ink); cursor: pointer; }
+.asset { display: grid; grid-template-columns: 18px minmax(52px, max-content) 1fr auto; align-items: center; gap: 6px; padding: 4px 10px; font-size: .84rem; color: var(--ink); cursor: pointer; }
 .asset:hover { background: var(--bg); }
 .asset .tk { font-family: var(--mono); font-size: .8rem; font-weight: 600; }
 .asset .nm { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

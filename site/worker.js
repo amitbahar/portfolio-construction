@@ -19,6 +19,8 @@ async function init() {
   }));
   const csv = await (await fetch("data/prices.csv")).text();
   pyodide.FS.writeFile("/home/pyodide/prices.csv", csv);
+  const meta = await (await fetch("data/meta.json")).text();
+  pyodide.FS.writeFile("/home/pyodide/meta.json", meta);
 
   await pyodide.runPythonAsync(`
 import sys, json
@@ -28,12 +30,14 @@ from engine.api import prepare, run_all
 
 _p = pd.read_csv("/home/pyodide/prices.csv", index_col=0, parse_dates=True)
 RETS, RF = prepare(_p.drop(columns="_rf"), _p["_rf"])
+EXCHANGES = {a["ticker"]: a.get("exchange", "US") for a in json.load(open("/home/pyodide/meta.json"))["assets"]}
 del _p
 
 def _run(cfg_json, trials_json, key, progress):
     try:
         out = run_all(json.loads(cfg_json), RETS, RF, trials=json.loads(trials_json),
-                      config_key=key, progress=lambda name, i, n: progress(name, i, n))
+                      config_key=key, progress=lambda name, i, n: progress(name, i, n),
+                      exchanges=EXCHANGES)
         return json.dumps(out)
     except ValueError as e:
         return json.dumps({"error": str(e)})
