@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest Data</title>
+<meta name="description" content="The price, return and T-bill data behind the portfolio construction backtest, with the quality checks it passed.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23234'/%3E%3Cpath d='M6 24 L12 16 L17 19 L26 8' stroke='%2366d9a8' stroke-width='3' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@4.3.0/plotly-basic.min.js" defer></script>
+<script type="module" src="data.js"></script>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow"><a class="back" href="./">← Portfolio construction lab</a></p>
+    <h1>The data behind the backtest</h1>
+    <p class="lede">Every price, return and interest rate the backtest uses, exactly as your browser loads it, with the quality checks it passed before it was published.</p>
+    <p class="disclaimer" role="note"><strong>Shown for transparency only.</strong>
+      Prices are from Yahoo Finance and remain subject to Yahoo's terms. Please don't reuse them as a data source.</p>
+  </div>
+</header>
+
+<main class="wrap stack">
+  <p id="load-status" class="status">Loading data…</p>
+
+  <div id="content" class="stack" hidden>
+    <article class="panel">
+      <h2>Snapshot</h2>
+      <p class="sub" id="snapshot-sub"></p>
+      <div class="stats" id="stats"></div>
+      <ul class="checks-list" id="quality"></ul>
+    </article>
+
+    <article class="panel">
+      <div class="section-head">
+        <h2>Funds</h2>
+        <input type="search" id="fund-filter" class="narrow" placeholder="Filter funds…" aria-label="Filter funds">
+      </div>
+      <p class="sub">One row per fund in the menu. Select a row to inspect its prices below. Coverage is the share of its own exchange's trading days with a price; gaps are forward-filled in the backtest.</p>
+      <div class="table-scroll tall"><table id="fund-table" class="data compact clickable"></table></div>
+    </article>
+
+    <article class="panel" id="viewer">
+      <div class="section-head">
+        <h2 id="viewer-title">Fund</h2>
+        <label class="inline">Fund <select id="fund-select"></select></label>
+      </div>
+      <p class="sub" id="viewer-sub"></p>
+      <h3>Adjusted close in US dollars (log scale)</h3>
+      <div id="chart-price" class="chart"></div>
+      <h3>Daily return</h3>
+      <div id="chart-ret" class="chart short"></div>
+      <div class="section-head rows-head">
+        <h3>Daily rows, newest first</h3>
+        <div class="pager">
+          <label class="inline">Go to date <input type="date" id="jump"></label>
+          <button type="button" class="ghost small" id="prev">← Newer</button>
+          <span id="page-info" class="hint"></span>
+          <button type="button" class="ghost small" id="next">Older →</button>
+        </div>
+      </div>
+      <div class="table-scroll"><table id="rows-table" class="data compact"></table></div>
+    </article>
+
+    <article class="panel">
+      <h2>Risk-free rate</h2>
+      <p class="sub">3-month US Treasury bill rate (FRED series DTB3), annualized. The backtest uses the rate known at the previous close to compute excess returns and Sharpe ratios.</p>
+      <div id="chart-rf" class="chart short"></div>
+    </article>
+
+    <article class="panel method">
+      <h2>How the data is stored</h2>
+      <p class="sub">A nightly GitHub Actions job downloads everything into a SQLite database, runs the quality checks in SQL, and publishes only if they pass. The database itself is rebuilt on every run and not published; the site ships the <code>prices_usd</code> view and the T-bill rate as one CSV, which is what this page and the backtest read.</p>
+      <div class="table-scroll"><table class="data compact schema">
+        <thead><tr><th>Table or view</th><th>Columns</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td><code>assets</code></td><td><code>ticker, name, category, exchange, currency</code></td><td>The curated fund menu.</td></tr>
+          <tr><td><code>prices</code></td><td><code>date, ticker, adj_close</code></td><td>Adjusted closes from Yahoo Finance in the trading currency (Tel Aviv funds in agorot).</td></tr>
+          <tr><td><code>fx</code></td><td><code>currency, date, local_per_usd</code></td><td>Bank of Israel representative shekel rate.</td></tr>
+          <tr><td><code>risk_free</code></td><td><code>date, annual_rate</code></td><td>3-month T-bill rate from FRED (DTB3).</td></tr>
+          <tr><td><code>download_log</code></td><td><code>downloaded_at, source, n_tickers, start_date, end_date</code></td><td>One row per refresh.</td></tr>
+          <tr><td><code>prices_usd</code> <span class="tag">view</span></td><td><code>date, ticker, adj_close</code></td><td>Prices converted to dollars at the latest exchange rate on or before each date.</td></tr>
+          <tr><td><code>returns</code> <span class="tag">view</span></td><td><code>date, ticker, ret</code></td><td>Daily return from each fund's previous price in dollars.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="foot">Schema and checks: <a id="schema-link" href="https://github.com/amitbahar/portfolio-construction/blob/main/pipeline/refresh.py">pipeline/refresh.py</a>.
+        Rights holders who want the data removed can <a id="issues-link" href="https://github.com/amitbahar/portfolio-construction/issues">open an issue</a>.</p>
+    </article>
+  </div>
+</main>
+</body>
+</html>

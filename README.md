@@ -56,7 +56,7 @@ flowchart LR
 |---|---|
 | `engine/` | Pure computation: strategies, simulation, statistics, and `api.run_all` (config in, JSON out). No I/O, so it runs in CPython and in Pyodide. |
 | `pipeline/` | `universe.py` (curated ETF menu), `refresh.py` (download → SQLite → currency conversion → quality gates → export), `build_site.py`, `smoke_test.py` |
-| `site/` | Static front end: `index.html`, `style.css`, `app.js` (UI, URL state, trial counter, charts), `worker.js` (Pyodide) |
+| `site/` | Static front end: `index.html`, `style.css`, `app.js` (UI, URL state, trial counter, charts), `worker.js` (Pyodide), and `data.html` / `data.js`, a page for browsing the published prices, returns, T-bill rate and quality report |
 | `research/` | The original 10-ETF case study (`case_study.py`) and its results |
 | `tests/` | Synthetic-data tests: manual share-count check, no-look-ahead, weight constraints, risk parity, deflated Sharpe, config validation, pipeline quality gates |
 | `.github/workflows/` | `deploy.yml` (nightly refresh and deploy), `tests.yml` (PRs and branches) |
