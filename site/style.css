@@ -92,6 +92,7 @@ input[type=number], input[type=date], input[type=search], select {
 input[type=range] { width: 100%; accent-color: var(--accent); }
 output { color: var(--ink); font-weight: 600; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid2 .span2 { grid-column: 1 / -1; }
 
 .trials { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; }
 .trials-head { display: flex; justify-content: space-between; align-items: center; }

@@ -20,12 +20,15 @@ def first_rebalance(index, lookback, freq="ME", start=None):
     return dates[0]
 
 
-def run(rule, rets, rf_daily, assets=None, lookback=252, freq="ME", cap=1.0, start=None, cov="daily"):
+def run(rule, rets, rf_daily, assets=None, lookback=252, freq="ME", cap=1.0, start=None, cov="daily", band=0.0):
     """Simulate a weighting rule.
 
     On each rebalance date d, `rule` sees only the trailing `lookback` returns of `assets` up to and
     including d; the new target applies from the next trading day. Between rebalances weights drift
     with returns. Columns of `rets` outside `assets` get zero weight.
+
+    No-trade band: when every drifted weight is within `band` (absolute) of its new target, the
+    rebalance is skipped and the portfolio keeps drifting. Otherwise it trades fully to the target.
 
     Returns daily gross returns, daily turnover (sum |trade|, recorded on rebalance days), drifted
     start-of-day weights, and the targets set at each rebalance.
@@ -56,8 +59,9 @@ def run(rule, rets, rf_daily, assets=None, lookback=252, freq="ME", cap=1.0, sta
         w = w * (1 + R[i]) / (1 + r)            # drift to end-of-day weights
         if i in reb:
             tgt = targets.loc[rets.index[i]].values
-            turnover[k] = np.abs(tgt - w).sum()
-            w = tgt.copy()
+            if np.abs(tgt - w).max() > band:
+                turnover[k] = np.abs(tgt - w).sum()
+                w = tgt.copy()
     return {
         "gross": pd.Series(gross, index=sim_idx),
         "turnover": pd.Series(turnover, index=sim_idx),

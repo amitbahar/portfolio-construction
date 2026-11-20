@@ -27,6 +27,7 @@ A page full of toggles invites data snooping, so the page pushes back:
 | **Weights over time, shown by default** | A "winning" strategy that's really 40% in one bond fund the whole time is visible at a glance. |
 | **Drawdown and same-risk comparisons** | A bootstrap interval on the max-drawdown difference, plus every strategy scaled to equal weight's volatility. |
 | **Cost sensitivity** | Sharpe at 0, 5, 10 and 25 bps, so you can see whether an edge survives realistic costs. |
+| **Lookback sensitivity** | After each run, the selected strategies are rerun with 126, 252 and 504-day lookbacks over a common period. The verdict flags any strategy whose ranking vs equal weight depends on the choice. Only the selected lookback counts as a trial. |
 
 ## How it works
 
@@ -44,7 +45,7 @@ flowchart LR
 ```
 
 - **No server and no tokens.** Pages serves static files, and the same Python engine used in research and tests runs in the visitor's browser via [Pyodide](https://pyodide.org). A typical run takes about 15–20 seconds. The first visit downloads about 30 MB of Python runtime, which the browser then caches.
-- **Walk-forward.** On each rebalance date a strategy sees only the trailing lookback window. Weights apply from the next trading day and drift with prices between rebalances. Costs are bps × turnover.
+- **Walk-forward.** On each rebalance date a strategy sees only the trailing lookback window. Weights apply from the next trading day and drift with prices between rebalances. Costs are bps × turnover. An optional no-trade band skips a rebalance when every drifted weight is within the band of its new target. It applies to all strategies and benchmarks alike.
 - **Covariance.** Ledoit-Wolf shrinkage, reimplemented in numpy (tested against scikit-learn) so the browser doesn't need to download sklearn. When the chosen funds trade on different exchanges, covariance is estimated from weekly returns. Tel Aviv closes before New York, so daily returns understate correlation: about 0.25 daily against 0.40 weekly for Tel Aviv funds vs SPY.
 - **Currencies.** Tel Aviv prices are stored in shekels and converted to US dollars in a SQL view at the Bank of Israel representative rate, so their returns include currency moves. Everything runs on the US trading calendar; a Tel Aviv move on a US holiday rolls into the next US trading day.
 - **Max Sharpe** uses raw trailing mean returns on purpose, to show estimation error. It's solved with an exact convex reformulation, about 200× faster than a frontier sweep, which is what makes in-browser runs practical.
