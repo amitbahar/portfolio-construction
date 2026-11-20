@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from engine.api import DEFAULT_CONFIG, normalize_config, prepare, run_all
+from engine.api import DEFAULT_CONFIG, LOOKBACKS, lookback_grid, normalize_config, prepare, run_all
 from engine.covariance import ledoit_wolf, shrunk_cov
 from engine.simulate import net_returns, run
 from engine.stats import deflated_sharpe, sharpe_moments
@@ -105,6 +105,8 @@ def test_config_validation():
     avail = DEFAULT_CONFIG["assets"]
     with pytest.raises(ValueError, match="infeasible"):
         normalize_config({"assets": ["SPY", "IEF"], "cap": 0.4}, avail)
+    with pytest.raises(ValueError, match="band"):
+        normalize_config({"band": 0.5}, avail)
     with pytest.raises(ValueError, match="Unknown"):
         normalize_config({"assets": ["SPY", "NOPE"]}, avail)
     c = normalize_config({"assets": ["TLT", "SPY", "GLD"], "strategies": ["HRP"]}, avail)
@@ -144,3 +146,50 @@ def test_too_short_period_is_rejected(market):
     _, rets, rf = market
     with pytest.raises(ValueError, match="years"):
         run_all({"assets": ["AAA", "BBB", "CCC"], "cap": 0.5, "start": "2015-06-01", "n_boot": 10}, rets, rf)
+
+
+def test_no_trade_band(market):
+    _, rets, rf = market
+    rets = rets.dropna()
+    turnover = {b: run(equal_weight, rets, rf, lookback=252, band=b)["turnover"] for b in (0.0, 0.02, 1.0)}
+    assert turnover[0.0].sum() > turnover[0.02].sum() > 0
+    assert turnover[1.0].sum() == 0  # a band wider than any drift never trades: buy and hold
+    # A band of zero is the plain monthly rebalance.
+    pd.testing.assert_series_equal(run(equal_weight, rets, rf, lookback=252)["gross"],
+                                   run(equal_weight, rets, rf, lookback=252, band=0.0)["gross"])
+    # When it does trade, it trades fully to the target.
+    res = run(STRATEGIES["Min variance"], rets, rf, lookback=252, band=0.02)
+    traded = res["turnover"][res["turnover"] > 0].index
+    pos = res["weights"].index.get_indexer(traded) + 1
+    pos = pos[pos < len(res["weights"])]
+    after = res["weights"].iloc[pos]
+    pd.testing.assert_frame_equal(after.reset_index(drop=True),
+                                  res["targets"].loc[traded[:len(pos)]].reset_index(drop=True), atol=1e-12)
+
+
+def test_band_applies_to_run_all(market):
+    _, rets, rf = market
+    cfg = {"assets": ["AAA", "BBB", "CCC", "DDD"], "cap": 0.5, "n_boot": 20, "strategies": ["Risk parity"]}
+    plain, banded = run_all(cfg, rets, rf), run_all({**cfg, "band": 0.05}, rets, rf)
+    for k in ("Equal weight", "Risk parity", "60/40"):
+        assert banded["table"][k]["net"]["ann_turnover"] < plain["table"][k]["net"]["ann_turnover"]
+
+
+def test_lookback_grid(market):
+    _, rets, rf = market
+    cfg = {"assets": ["AAA", "BBB", "CCC", "DDD"], "cap": 0.5, "n_boot": 20, "strategies": ["Min variance", "HRP"]}
+    keep = {}
+    run_all(cfg, rets, rf, keep=keep)
+    g = lookback_grid(cfg, rets, rf, base=keep)
+    json.dumps(g)
+    assert g["lookbacks"] == list(LOOKBACKS) and g["selected"] == 252
+    assert set(g["rows"]) == {"Equal weight", "Min variance", "HRP"}
+    for lb in LOOKBACKS:
+        assert g["rows"]["Equal weight"][str(lb)]["d_sharpe"] == 0
+    # Reusing run_all's returns gives the same answer as simulating every lookback from scratch.
+    assert lookback_grid(cfg, rets, rf)["rows"] == g["rows"]
+    # Lookbacks that leave too short a common period are dropped, and with fewer than two left, all are.
+    short = lookback_grid({**cfg, "lookback": 126, "end": "2014-03-31"}, rets, rf)
+    assert short["lookbacks"] == [126, 252] and short["skipped"] == [504] and short["years"] >= 3
+    none = lookback_grid({**cfg, "start": "2014-01-01"}, rets, rf)
+    assert none["lookbacks"] == [] and "years" in none["note"]

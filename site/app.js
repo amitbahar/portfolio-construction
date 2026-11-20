@@ -7,7 +7,7 @@ const FROM_CODE = Object.fromEntries(Object.entries(CODES).map(([k, v]) => [v, k
 const BENCH_TICKERS = ["SPY", "IEF"];
 const DEFAULT = {
   assets: ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "IEF", "LQD", "GLD", "VNQ"],
-  strategies: [...STRATS], lookback: 252, freq: "ME", cost_bps: 10, cap: 0.4, start: null, end: null,
+  strategies: [...STRATS], lookback: 252, freq: "ME", cost_bps: 10, cap: 0.4, band: 0, start: null, end: null,
 };
 const PRESETS = {
   "Original 10": DEFAULT.assets,
@@ -25,6 +25,7 @@ const GROUP_NOTES = {
     + "too low; when you mix exchanges, the optimizers estimate risk from weekly returns instead.",
 };
 const shortTicker = (t) => t.replace(/\.TA$/, "");
+const BANDS = [0, 1, 2, 5, 10]; // no-trade band options, % weight
 const ASSET_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7",
   "#9c755f", "#bab0ac", "#1f77b4", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf", "#bcbd22",
   "#aec7e8", "#ffbb78"];
@@ -55,6 +56,7 @@ function cfgToHash(c) {
   p.set("f", c.freq === "QE" ? "q" : "m");
   p.set("c", c.cost_bps);
   p.set("cap", Math.round(c.cap * 100));
+  if (c.band) p.set("band", Math.round(c.band * 100));
   if (c.start) p.set("from", c.start);
   if (c.end) p.set("to", c.end);
   return "#" + p.toString();
@@ -70,6 +72,7 @@ function hashToCfg(hash, available) {
   c.freq = p.get("f") === "q" ? "QE" : "ME";
   if (p.has("c") && isFinite(+p.get("c"))) c.cost_bps = Math.min(200, Math.max(0, +p.get("c")));
   if (p.has("cap") && isFinite(+p.get("cap"))) c.cap = Math.min(1, Math.max(0.05, +p.get("cap") / 100));
+  if (BANDS.includes(+p.get("band"))) c.band = +p.get("band") / 100;
   const date = /^\d{4}-\d{2}-\d{2}$/;
   if (date.test(p.get("from") || "")) c.start = p.get("from");
   if (date.test(p.get("to") || "")) c.end = p.get("to");
@@ -90,7 +93,7 @@ function renderTrials() {
   $("n-configs").textContent = `${n} configuration${n === 1 ? "" : "s"}`;
   $("n-variants").textContent = `${keys.length} strategy variant${keys.length === 1 ? "" : "s"}`;
 }
-const configKey = (c) => JSON.stringify([[...c.assets].sort(), [...c.strategies].sort(), c.lookback, c.freq, c.cost_bps, c.cap, c.start, c.end]);
+const configKey = (c) => JSON.stringify([[...c.assets].sort(), [...c.strategies].sort(), c.lookback, c.freq, c.cost_bps, c.cap, c.band, c.start, c.end]);
 
 // ---------- controls ----------
 function minCap(n) { return Math.min(100, Math.ceil(100 / n / 5) * 5); }
@@ -152,6 +155,7 @@ function buildControls() {
     state.cfg.cost_bps = v; e.target.value = v; onConfigChange();
   });
   $("cap").addEventListener("input", (e) => { state.cfg.cap = +e.target.value / 100; $("cap-out").textContent = `${e.target.value}%`; onConfigChange(); });
+  $("band").addEventListener("change", (e) => { state.cfg.band = +e.target.value / 100; onConfigChange(); });
   $("start").addEventListener("change", (e) => { state.cfg.start = e.target.value || null; onConfigChange(); });
   $("end").addEventListener("change", (e) => { state.cfg.end = e.target.value || null; onConfigChange(); });
   $("run").addEventListener("click", run);
@@ -186,6 +190,7 @@ function writeControls() {
   $("lookback").value = c.lookback;
   $("freq").value = c.freq;
   $("cost").value = c.cost_bps;
+  $("band").value = String(Math.round(c.band * 100));
   $("start").value = c.start || "";
   $("end").value = c.end || "";
   syncCap();
@@ -237,7 +242,14 @@ worker.onmessage = (e) => {
     else {
       trials = m.result.trials; saveTrials(trials); renderTrials();
       state.result = m.result; $("status").hidden = true; render();
+      state.running = true; // the worker goes on to the lookback check
     }
+    onConfigChange();
+    if (state.running) $("run").textContent = "Checking lookbacks…";
+  } else if (m.type === "lookbacks" && m.id === state.runId) {
+    state.running = false;
+    state.result.lookbacks = m.grid;
+    renderVerdict(); renderLookbacks();
     onConfigChange();
   }
 };
@@ -264,6 +276,7 @@ function render() {
   renderMainTable();
   renderCharts();
   renderSideTables();
+  renderLookbacks();
 }
 
 function renderVerdict() {
@@ -315,6 +328,11 @@ function renderVerdict() {
   });
   const capped = tried.filter((k) => r.config.cap < 1 && r.table[k].net.avg_max_weight >= r.config.cap - 0.005);
   if (capped.length) points.push({ cls: "warn", text: `${capped.join(", ")} sit${capped.length === 1 ? "s" : ""} at the ${pct(r.config.cap, 0)} cap on average, so the cap is doing much of the work.` });
+  const lbFlips = lookbackFlips(r.lookbacks);
+  if (lbFlips.length) points.push({
+    cls: "warn",
+    text: `The ranking vs equal weight changes with the lookback window for ${lbFlips.join(", ")}, so the result depends on a parameter choice.`,
+  });
   const costKilled = tried.filter((k) => r.costs.rows[k]["0"].sharpe > r.costs.rows["Equal weight"]["0"].sharpe && r.table[k].net.sharpe <= ew.sharpe);
   if (costKilled.length) points.push({ cls: "bad", text: `${costKilled.join(", ")} beat${costKilled.length === 1 ? "s" : ""} equal weight before costs but not after ${r.config.cost_bps} bps.` });
 
@@ -337,6 +355,7 @@ function renderMainTable() {
   $("period-line").textContent = `${p.start} to ${p.end} (${p.years.toFixed(1)} years) · ${r.config.assets.length} assets · `
     + `${r.config.lookback}-day lookback · ${r.config.freq === "QE" ? "quarterly" : "monthly"} rebalance · `
     + `${r.config.cost_bps} bps costs · ${pct(r.config.cap, 0)} cap`
+    + (r.config.band ? ` · ${pct(r.config.band, 0)} no-trade band` : "")
     + (r.config.cov_freq === "weekly" ? " · weekly covariance (assets trade on different exchanges)" : "");
   const M = Math.max(0.2, ...Object.values(r.vs_ew).flatMap((v) => v.d_sharpe_ci.map(Math.abs)));
   const rows = r.strategies.map((k) => {
@@ -436,6 +455,32 @@ function renderSideTables() {
       + g.map((b) => `<td>${num(r.costs.rows[k][String(b)].sharpe)}</td>`).join("") + "</tr>").join("") + "</tbody>";
 }
 
+// Strategies whose sign of ΔSharpe vs equal weight is not the same at every lookback.
+function lookbackFlips(g) {
+  if (!g || !g.lookbacks.length) return [];
+  return Object.keys(g.rows).filter((k) => k !== "Equal weight"
+    && new Set(g.lookbacks.map((lb) => Math.sign(g.rows[k][String(lb)].d_sharpe))).size > 1);
+}
+
+function renderLookbacks() {
+  const g = state.result.lookbacks;
+  $("lookback-table").innerHTML = "";
+  if (!g) { $("lookback-sub").textContent = "Running the same backtest with the other lookback windows…"; return; }
+  if (!g.lookbacks.length) { $("lookback-sub").textContent = g.note; return; }
+  $("lookback-sub").textContent = `Sharpe ratio net of costs, with the difference vs equal weight at the same lookback, over ${g.start} to ${g.end} `
+    + `(${g.years.toFixed(1)} years), when every lookback has a full window. A tag marks a strategy whose ranking vs equal weight depends on the lookback. `
+    + "Only your selected lookback (●) counts as a trial. Switching to the best-looking one and rerunning counts as another."
+    + (g.skipped.length ? ` The ${g.skipped.join(" and ")}-day lookback${g.skipped.length > 1 ? "s are" : " is"} left out: `
+      + `not enough history for a common period of at least 3 years.` : "");
+  const flips = new Set(lookbackFlips(g));
+  $("lookback-table").innerHTML = `<thead><tr><th>Strategy</th>${g.lookbacks.map((lb) => `<th>${lb} days${lb === g.selected ? " ●" : ""}</th>`).join("")}</tr></thead><tbody>`
+    + Object.keys(g.rows).map((k) => `<tr class="${k === "Equal weight" ? "ew" : ""}"><td class="name">${sw(k)}${k}${flips.has(k) ? '<span class="tag">flips</span>' : ""}</td>`
+      + g.lookbacks.map((lb) => {
+        const v = g.rows[k][String(lb)];
+        return `<td>${num(v.sharpe)}${k === "Equal weight" ? "" : ` <span class="ci-text ${v.d_sharpe > 0 ? "pos" : "neg"}">(${snum(v.d_sharpe)})</span>`}</td>`;
+      }).join("") + "</tr>").join("") + "</tbody>";
+}
+
 // ---------- boot ----------
 async function boot() {
   renderTrials();
@@ -448,7 +493,7 @@ async function boot() {
   onConfigChange();
   const q = state.meta.quality;
   $("data-line").textContent = `Data through ${state.meta.data_through}, downloaded ${state.meta.downloaded_at.replace("T", " ").slice(0, 16)} UTC (${state.meta.source}). `
-    + `${q.extreme_returns.length} daily moves beyond ±15% are kept and listed for review in data/meta.json.`;
+    + `${q.extreme_returns.length} daily moves beyond ±15% are kept and flagged for review on the data page.`;
   if (state.meta.repo) { $("repo-link").href = state.meta.repo; $("issues-link").href = `${state.meta.repo}/issues`; }
   if (state.ready) run();
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.result && render());

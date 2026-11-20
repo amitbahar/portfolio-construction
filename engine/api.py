@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
     "freq": "ME",
     "cost_bps": 10.0,
     "cap": 0.40,
+    "band": 0.0,            # no-trade band: skip a rebalance unless some weight is this far from its new target
     "n_boot": 1000,
     "block": 21,
     "seed": 0,
@@ -28,6 +29,7 @@ DEFAULT_CONFIG = {
 LOOKBACKS = (126, 252, 504)
 FREQS = {"ME": "monthly", "QE": "quarterly"}
 COST_GRID = (0, 5, 10, 25)
+MAX_BAND = 0.25
 MIN_YEARS = 3
 STRESS_PERIODS = [
     ("2008-09 financial crisis", "2008-01-01", "2009-12-31"),
@@ -71,6 +73,9 @@ def normalize_config(cfg, available):
     c["cost_bps"] = float(c["cost_bps"])
     if not 0 <= c["cost_bps"] <= 200:
         raise ValueError("Cost must be between 0 and 200 bps.")
+    c["band"] = float(c["band"])
+    if not 0 <= c["band"] <= MAX_BAND:
+        raise ValueError(f"The no-trade band must be between 0% and {MAX_BAND:.0%}.")
     c["cap"] = float(c["cap"])
     if c["cap"] * len(c["assets"]) < 1 - 1e-9:
         raise ValueError(f"A {c['cap']:.0%} cap is infeasible with {len(c['assets'])} assets: "
@@ -94,7 +99,32 @@ def _clean(x):
     return x
 
 
-def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None, exchanges=None):
+def _setup(cfg, rets_all, rf_daily, exchanges):
+    """Validated config plus the returns and risk-free rate restricted to the backtest period."""
+    c = normalize_config(cfg, list(rets_all.columns))
+    cols = list(dict.fromkeys(c["assets"] + BENCHMARK_TICKERS))
+    rets = rets_all[cols]
+    rets = rets.loc[rets.notna().all(axis=1).idxmax():]          # common start: all chosen tickers trade
+    if c["end"]:
+        rets = rets.loc[:c["end"]]
+    rets = rets.dropna()
+    venues = {(exchanges or {}).get(a, "US") for a in c["assets"]}
+    c["cov_freq"] = "weekly" if len(venues) > 1 else "daily"
+    return c, rets, rf_daily.reindex(rets.index), cols
+
+
+def _simulate(name, rule, c, rets, rf, cols, lookback):
+    assets = c["assets"] if name in STRATEGIES else cols
+    return run(rule, rets, rf, assets=assets, lookback=lookback, freq=c["freq"], cap=c["cap"], start=c["start"],
+               cov=c["cov_freq"], band=c["band"])
+
+
+def _ann_sharpe(r, rf):
+    ex = r - rf.reindex(r.index)
+    return ex.mean() / ex.std() * np.sqrt(252)
+
+
+def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None, exchanges=None, keep=None):
     """Run every selected strategy plus the fixed benchmarks and compute all report sections.
 
     trials: {trial_key: daily Sharpe} of strategy variants already tried this session, used for the
@@ -103,19 +133,12 @@ def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None
 
     exchanges: {ticker: exchange}. When the chosen assets trade on more than one exchange, the
     optimizers estimate covariance from weekly returns (see covariance.shrunk_cov).
-    """
-    c = normalize_config(cfg, list(rets_all.columns))
-    cols = list(dict.fromkeys(c["assets"] + BENCHMARK_TICKERS))
-    rets = rets_all[cols]
-    rets = rets.loc[rets.notna().all(axis=1).idxmax():]          # common start: all chosen tickers trade
-    if c["end"]:
-        rets = rets.loc[:c["end"]]
-    rets = rets.dropna()
-    rf = rf_daily.reindex(rets.index)
-    first_common = rets.index[0]
 
-    venues = {(exchanges or {}).get(a, "US") for a in c["assets"]}
-    c["cov_freq"] = "weekly" if len(venues) > 1 else "daily"
+    keep: optional dict that receives the lookback and net returns of the selected strategies, so
+    lookback_grid can reuse them instead of simulating the selected lookback again.
+    """
+    c, rets, rf, cols = _setup(cfg, rets_all, rf_daily, exchanges)
+    first_common = rets.index[0]
 
     rules = {k: STRATEGIES[k] for k in c["strategies"]}
     rules.update(BENCHMARKS)
@@ -123,9 +146,7 @@ def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None
     for i, (name, rule) in enumerate(rules.items()):
         if progress:
             progress(name, i, len(rules))
-        assets = c["assets"] if name in STRATEGIES else cols
-        res[name] = run(rule, rets, rf, assets=assets, lookback=c["lookback"], freq=c["freq"],
-                        cap=c["cap"], start=c["start"], cov=c["cov_freq"])
+        res[name] = _simulate(name, rule, c, rets, rf, cols, c["lookback"])
     period = res["Equal weight"]["gross"].index
     years = len(period) / 252
     if years < MIN_YEARS:
@@ -136,6 +157,8 @@ def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None
 
     bps = c["cost_bps"]
     net = {k: net_returns(r, bps) for k, r in res.items()}
+    if keep is not None:
+        keep.update(lookback=c["lookback"], net={k: net[k] for k in c["strategies"]})
     out = {
         "config": c,
         "period": {"start": period[0], "end": period[-1], "years": years, "data_start": first_common,
@@ -210,3 +233,47 @@ def run_all(cfg, rets_all, rf_daily, trials=None, config_key=None, progress=None
         out["weights"][k] = {"dates": [d.strftime("%Y-%m-%d") for d in w.index], "assets": c["assets"],
                              "values": w.round(4).values.T.tolist()}
     return _clean(out)
+
+
+def lookback_grid(cfg, rets_all, rf_daily, exchanges=None, progress=None, base=None):
+    """Net Sharpe of each selected strategy at every lookback in LOOKBACKS, and its difference from
+    equal weight at the same lookback.
+
+    All lookbacks are compared over the common period in which each has a full window, so the
+    numbers differ from the main table when the selected lookback is shorter than the longest one.
+    base: {"lookback", "net"} as filled in by run_all(keep=...), reused instead of re-simulating.
+    """
+    c, rets, rf, cols = _setup(cfg, rets_all, rf_daily, exchanges)
+    nets = {base["lookback"]: base["net"]} if base else {}
+    todo = [lb for lb in LOOKBACKS if lb not in nets]
+    skipped = []
+    for j, lb in enumerate(todo):
+        try:
+            sims = {}
+            for i, k in enumerate(c["strategies"]):
+                if progress:
+                    progress(f"{k}, {lb}-day lookback", j * len(c["strategies"]) + i, len(todo) * len(c["strategies"]))
+                sims[k] = net_returns(_simulate(k, STRATEGIES[k], c, rets, rf, cols, lb), c["cost_bps"])
+            nets[lb] = sims
+        except ValueError:          # not enough history for this lookback
+            skipped.append(lb)
+    # Longer lookbacks start later; drop them until the common period is long enough to compare.
+    lbs = sorted(nets)
+    while len(lbs) >= 2:
+        start = max(nets[lb]["Equal weight"].index[0] for lb in lbs)
+        end = min(nets[lb]["Equal weight"].index[-1] for lb in lbs)
+        n_days = len(nets[lbs[0]]["Equal weight"].loc[start:end])
+        if n_days / 252 >= MIN_YEARS:
+            break
+        skipped.append(lbs.pop())
+    if len(lbs) < 2:
+        return {"lookbacks": [], "note": f"There is not enough history to compare lookback windows over at least "
+                                         f"{MIN_YEARS} years for this period."}
+    rows = {}
+    for k in c["strategies"]:
+        for lb in lbs:
+            sr = _ann_sharpe(nets[lb][k].loc[start:end], rf)
+            ew = _ann_sharpe(nets[lb]["Equal weight"].loc[start:end], rf)
+            rows.setdefault(k, {})[str(lb)] = {"sharpe": sr, "d_sharpe": sr - ew}
+    return _clean({"lookbacks": lbs, "selected": c["lookback"], "skipped": sorted(skipped), "start": start, "end": end,
+                   "years": n_days / 252, "rows": rows})
